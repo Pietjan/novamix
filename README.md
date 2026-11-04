@@ -29,14 +29,29 @@ novamix [flags]
 | `-v` | | Debug logging: every volume change and the collections opened on the dongle. |
 | `-dump` | | Log every raw HID report. Use it when the dial does nothing, to see what the dongle sends. |
 
-Leave the headset as the default playback device and start novamix; it waits
-for the dongle, follows it through unplugs and sleeps, and on Ctrl+C puts the
-per-app volumes back the way they were.
+| `-install` | | Copy the exe to `%LOCALAPPDATA%\Programs\novamix`, register a Task Scheduler task that runs it at your logon with the other flags given on the same command line, start it, and exit. |
+| `-uninstall` | | Stop and remove that task and the installed copy, and exit. |
 
-`make build` produces `bin/novamix.exe` without a console window (start it
-from Task Scheduler or a Startup shortcut, with `-log`). `make build/debug`
-produces `bin/novamix-debug.exe` with a console, and `make run` launches that
-from WSL2.
+Start novamix and it waits for the dongle, follows it through unplugs and
+sleeps, and on Ctrl+C puts the per-app volumes and default devices back the
+way they were.
+
+To have it run at every logon:
+
+```
+novamix.exe -install
+```
+
+Any other flag on that command line is baked into the task, for example
+`novamix.exe -install -fallback Speakers -chat discord,teams`. The task runs
+in your session without elevation, has no time limit, ignores battery state,
+restarts on a crash, and logs to `%LOCALAPPDATA%\Programs\novamix\novamix.log`.
+Re-run `-install` to update the exe or change flags; `-uninstall` removes it.
+
+`make build` produces `bin/novamix.exe` without a console window and
+`make build/debug` produces `bin/novamix-debug.exe` with one; `make run`,
+`make install` and `make uninstall` drive those from WSL2 through Windows
+interop.
 
 ## How it works
 

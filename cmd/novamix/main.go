@@ -41,12 +41,27 @@ func main() {
 		dump        = flag.Bool("dump", false, "log every raw HID report from the dongle (implies -v)")
 		dryRun      = flag.Bool("dry-run", false, "log the volumes that would be set without changing anything")
 		list        = flag.Bool("list", false, "list the HID collections of attached SteelSeries devices and exit")
+		doInstall   = flag.Bool("install", false, "copy the exe to %LOCALAPPDATA%\\Programs\\novamix, register a logon task that runs it with the other flags given here, start it, and exit")
+		doUninstall = flag.Bool("uninstall", false, "stop and remove the logon task and the installed copy, and exit")
 		showVersion = flag.Bool("version", false, "print the version and exit")
 	)
 	flag.Parse()
 
 	if *showVersion {
 		fmt.Println("novamix", version)
+		return
+	}
+	if *doInstall || *doUninstall {
+		var err error
+		if *doInstall {
+			err = install(serviceArgs())
+		} else {
+			err = uninstall()
+		}
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
 		return
 	}
 

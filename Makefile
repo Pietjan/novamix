@@ -111,6 +111,18 @@ run/dump: build/debug
 # OPERATIONS
 # ==================================================================================== #
 
+## install: build and register the logon task on the Windows host (from WSL2), e.g. make install args='-fallback Speakers'
+.PHONY: install
+install: build
+	cp bin/$(binary_name).exe "$(win_temp)/$(binary_name).exe"
+	"$(win_temp)/$(binary_name).exe" -install $(args)
+
+## uninstall: stop and remove the logon task on the Windows host
+.PHONY: uninstall
+uninstall: build
+	cp bin/$(binary_name).exe "$(win_temp)/$(binary_name).exe"
+	"$(win_temp)/$(binary_name).exe" -uninstall
+
 .PHONY: release/version
 release/version:
 	@echo '$(version)' | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$$' || { echo 'usage: make release version=vX.Y.Z'; exit 1; }
