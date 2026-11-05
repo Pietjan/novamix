@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -8,10 +9,28 @@ import (
 	"os/user"
 	"path/filepath"
 	"strings"
+	"time"
+
+	"golang.org/x/sys/windows"
 )
 
 // taskName is the Task Scheduler task novamix registers for itself.
 const taskName = "novamix"
+
+// schtasks /End returns before the task's process has exited, so the
+// installed exe stays locked for a moment afterwards. Replacing or
+// deleting it is retried for this long before giving up.
+const (
+	releaseTimeout  = 10 * time.Second
+	releaseInterval = 100 * time.Millisecond
+)
+
+// fileBusy reports whether err means the file is still held by a running
+// process: a sharing violation when opening it for writing, access denied
+// when deleting it.
+func fileBusy(err error) bool {
+	return errors.Is(err, windows.ERROR_SHARING_VIOLATION) || errors.Is(err, windows.ERROR_ACCESS_DENIED)
+}
 
 // installDir is where the running executable is copied to, so the task
 // does not depend on wherever the exe was launched from.
@@ -41,9 +60,11 @@ func install(args []string) error {
 		return err
 	}
 	if !strings.EqualFold(self, exe) {
-		// A running copy cannot be overwritten; stop the task first.
+		// A running copy cannot be overwritten; stop the task first and
+		// wait for its process to let go of the file.
 		_ = schtasks("/End", "/TN", taskName)
-		if err := copyFile(self, exe); err != nil {
+		err := retryWhile(releaseTimeout, releaseInterval, fileBusy, func() error { return copyFile(self, exe) })
+		if err != nil {
 			return fmt.Errorf("copying executable: %w", err)
 		}
 	}
@@ -92,7 +113,8 @@ func uninstall() error {
 		fmt.Printf("task %s removed; delete %s yourself, it is the running executable\n", taskName, exe)
 		return nil
 	}
-	if err := os.Remove(exe); err != nil && !os.IsNotExist(err) {
+	err = retryWhile(releaseTimeout, releaseInterval, fileBusy, func() error { return os.Remove(exe) })
+	if err != nil && !os.IsNotExist(err) {
 		return err
 	}
 	fmt.Printf("task %s removed, %s deleted\n", taskName, exe)

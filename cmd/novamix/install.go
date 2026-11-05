@@ -5,8 +5,23 @@ import (
 	"encoding/xml"
 	"os"
 	"strings"
+	"time"
 	"unicode/utf16"
 )
+
+// retryWhile calls fn until it succeeds, fails with an error that
+// retryable rejects, or timeout has passed, sleeping interval between
+// attempts. It returns fn's last error.
+func retryWhile(timeout, interval time.Duration, retryable func(error) bool, fn func() error) error {
+	deadline := time.Now().Add(timeout)
+	for {
+		err := fn()
+		if err == nil || !retryable(err) || !time.Now().Before(deadline) {
+			return err
+		}
+		time.Sleep(interval)
+	}
+}
 
 // hasFlag reports whether args sets the named flag in any spelling.
 func hasFlag(args []string, name string) bool {

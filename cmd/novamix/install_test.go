@@ -3,8 +3,10 @@ package main
 import (
 	"bytes"
 	"encoding/xml"
+	"errors"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf16"
 )
 
@@ -69,6 +71,43 @@ func TestTaskXML(t *testing.T) {
 	}
 	if !strings.Contains(body, `<Principal id="Author">`) {
 		t.Errorf("principal id attribute missing")
+	}
+}
+
+func TestRetryWhile(t *testing.T) {
+	busy := errors.New("busy")
+	fatal := errors.New("fatal")
+	isBusy := func(err error) bool { return errors.Is(err, busy) }
+
+	// Succeeds once the file is released.
+	calls := 0
+	err := retryWhile(time.Second, time.Millisecond, isBusy, func() error {
+		calls++
+		if calls < 4 {
+			return busy
+		}
+		return nil
+	})
+	if err != nil || calls != 4 {
+		t.Errorf("released after 3 busy: err = %v, calls = %d, want nil, 4", err, calls)
+	}
+
+	// An error that is not "busy" is returned at once.
+	calls = 0
+	err = retryWhile(time.Second, time.Millisecond, isBusy, func() error { calls++; return fatal })
+	if !errors.Is(err, fatal) || calls != 1 {
+		t.Errorf("fatal error: err = %v, calls = %d, want fatal, 1", err, calls)
+	}
+
+	// Still busy at the deadline: gives up with the busy error.
+	calls = 0
+	start := time.Now()
+	err = retryWhile(30*time.Millisecond, 5*time.Millisecond, isBusy, func() error { calls++; return busy })
+	if !errors.Is(err, busy) || calls < 2 {
+		t.Errorf("never released: err = %v, calls = %d, want busy after several calls", err, calls)
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Errorf("gave up after %v, want about 30ms", elapsed)
 	}
 }
 
