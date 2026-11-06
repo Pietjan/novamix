@@ -52,6 +52,10 @@ func main() {
 		fmt.Println("novamix", version)
 		return
 	}
+	if openedFromExplorer(os.Args[1:], hasConsole()) {
+		setup()
+		return
+	}
 	if *doInstall || *doUninstall {
 		var err error
 		if *doInstall {

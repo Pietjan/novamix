@@ -23,6 +23,15 @@ func retryWhile(timeout, interval time.Duration, retryable func(error) bool, fn 
 	}
 }
 
+// openedFromExplorer reports whether the exe was started the way a
+// double-click starts it: without arguments and, being the windowless
+// build, without a console. Then nobody chose what it should do and
+// nobody would see what it prints, so it offers to install itself in a
+// dialog. Any argument, or the console build, runs it as usual.
+func openedFromExplorer(args []string, console bool) bool {
+	return len(args) == 0 && !console
+}
+
 // hasFlag reports whether args sets the named flag in any spelling.
 func hasFlag(args []string, name string) bool {
 	for _, a := range args {

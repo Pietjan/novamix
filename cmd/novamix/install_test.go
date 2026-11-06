@@ -119,3 +119,21 @@ func TestHasFlagAndJoinArgs(t *testing.T) {
 		t.Errorf("joinArgs = %q", got)
 	}
 }
+
+func TestOpenedFromExplorer(t *testing.T) {
+	tests := []struct {
+		args    []string
+		console bool
+		want    bool
+	}{
+		{nil, false, true},                    // double-click on the windowless build
+		{nil, true, false},                    // console build started bare
+		{[]string{"-v"}, false, false},        // any flag runs it as usual
+		{[]string{"-log", "x"}, false, false}, // the logon task
+	}
+	for _, tt := range tests {
+		if got := openedFromExplorer(tt.args, tt.console); got != tt.want {
+			t.Errorf("openedFromExplorer(%q, %v) = %v, want %v", tt.args, tt.console, got, tt.want)
+		}
+	}
+}

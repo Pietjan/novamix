@@ -49,6 +49,13 @@ in your session without elevation, has no time limit, ignores battery state,
 restarts on a crash, and logs to `%LOCALAPPDATA%\Programs\novamix\novamix.log`.
 Re-run `-install` to update the exe or change flags; `-uninstall` removes it.
 
+Without a terminal: open `novamix.exe` from Explorer. Started without any
+flag, the windowless build asks in a dialog whether to install (the same as
+`-install` with no other flags) and confirms when it is running; opened
+again once installed, it asks whether to remove it. To run that build
+without installing, start it with any flag, for example `novamix.exe -v`.
+The console build always just runs.
+
 `make build` produces `bin/novamix.exe` without a console window and
 `make build/debug` produces `bin/novamix-debug.exe` with one; `make run`,
 `make install` and `make uninstall` drive those from WSL2 through Windows
