@@ -36,6 +36,7 @@ func main() {
 		refresh     = flag.Duration("refresh", 2*time.Second, "how often to re-apply the dial to audio sessions that appeared since")
 		autoSwitch  = flag.Bool("switch", true, "make the headset the default playback and recording device while it is on, and restore the previous ones when it goes off")
 		fallback    = flag.String("fallback", "", "substring of the device to switch to when the headset goes off and it already was the default when novamix started")
+		kick        = flag.Bool("kick", true, "after switching, close the streams of applications still playing on the old device so they reopen on the new one (games that ignore a change of default device)")
 		logPath     = flag.String("log", "", "append log output to this file instead of stderr")
 		verbose     = flag.Bool("v", false, "debug logging")
 		dump        = flag.Bool("dump", false, "log every raw HID report from the dongle (implies -v)")
@@ -101,7 +102,7 @@ func main() {
 	headset := make(chan bool, 1)
 	switchDone := make(chan error, 1)
 	if *autoSwitch && !*dryRun {
-		sw := switcher.New(log, *device, *fallback)
+		sw := switcher.New(log, *device, *fallback, *kick)
 		go func() { switchDone <- sw.Run(ctx, headset) }()
 	} else {
 		switchDone <- nil

@@ -10,11 +10,14 @@ package switcher
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"runtime"
+	"slices"
 	"strings"
 	"syscall"
+	"time"
 	"unsafe"
 
 	"github.com/go-ole/go-ole"
@@ -34,27 +37,94 @@ var (
 // communications.
 var roles = [...]uint32{wca.EConsole, wca.EMultimedia, wca.ECommunications}
 
-// policyConfig wraps the COM object; only SetDefaultEndpoint is used.
+// kickDelay is how long applications get to follow a switch on their own
+// before the ones still playing on the old device are kicked off it.
+const kickDelay = time.Second
+
+// policyConfig wraps the COM object and the methods used of it.
 type policyConfig struct {
 	unk                *ole.IUnknown
+	getMixFormat       uintptr
+	getDeviceFormat    uintptr
+	setDeviceFormat    uintptr
 	setDefaultEndpoint uintptr
 }
 
 func newPolicyConfig() (*policyConfig, error) {
-	// Vtable slot of SetDefaultEndpoint after the three IUnknown methods.
-	const slotWin10, slotVista = 3 + 10, 3 + 9
+	// Vtable slots after the three IUnknown methods. Windows 10 inserted
+	// ResetDeviceFormat after GetDeviceFormat, shifting everything behind.
+	const getMixFormat, getDeviceFormat = 3 + 0, 3 + 1
 
 	unk, err := ole.CreateInstance(clsidPolicyConfigClient, iidPolicyConfig)
-	slot := slotWin10
+	setDeviceFormat, setDefaultEndpoint := 3+3, 3+10
 	if err != nil {
 		unk, err = ole.CreateInstance(clsidPolicyConfigClient, iidPolicyConfigVista)
-		slot = slotVista
+		setDeviceFormat, setDefaultEndpoint = 3+2, 3+9
 	}
 	if err != nil {
 		return nil, fmt.Errorf("creating PolicyConfig client: %w", err)
 	}
 	vtable := (*[16]uintptr)(unsafe.Pointer(unk.RawVTable))
-	return &policyConfig{unk: unk, setDefaultEndpoint: vtable[slot]}, nil
+	return &policyConfig{
+		unk:                unk,
+		getMixFormat:       vtable[getMixFormat],
+		getDeviceFormat:    vtable[getDeviceFormat],
+		setDeviceFormat:    vtable[setDeviceFormat],
+		setDefaultEndpoint: vtable[setDefaultEndpoint],
+	}, nil
+}
+
+// Formats returns the format the endpoint runs at and the engine mix
+// format feeding it, as WAVEFORMATEX blobs.
+func (p *policyConfig) Formats(deviceID string) (device, mix []byte, err error) {
+	id, err := windows.UTF16PtrFromString(deviceID)
+	if err != nil {
+		return nil, nil, err
+	}
+	var ptr unsafe.Pointer
+	hr, _, _ := syscall.SyscallN(p.getDeviceFormat,
+		uintptr(unsafe.Pointer(p.unk)), uintptr(unsafe.Pointer(id)), 0, uintptr(unsafe.Pointer(&ptr)))
+	if hr != 0 {
+		return nil, nil, fmt.Errorf("device format: %w", ole.NewError(hr))
+	}
+	device = takeFormat(ptr)
+
+	hr, _, _ = syscall.SyscallN(p.getMixFormat,
+		uintptr(unsafe.Pointer(p.unk)), uintptr(unsafe.Pointer(id)), uintptr(unsafe.Pointer(&ptr)))
+	if hr != 0 {
+		return nil, nil, fmt.Errorf("mix format: %w", ole.NewError(hr))
+	}
+	return device, takeFormat(ptr), nil
+}
+
+// takeFormat copies a WAVEFORMATEX returned by COM and frees the original.
+func takeFormat(ptr unsafe.Pointer) []byte {
+	if ptr == nil {
+		return nil
+	}
+	defer ole.CoTaskMemFree(uintptr(ptr))
+	size := formatSize(unsafe.Slice((*byte)(ptr), waveFormatExSize))
+	return slices.Clone(unsafe.Slice((*byte)(ptr), size))
+}
+
+// SetDeviceFormat sets the format of an endpoint and of the engine mix
+// feeding it. Windows closes every stream open on the endpoint, also when
+// the format is the one it already had.
+func (p *policyConfig) SetDeviceFormat(deviceID string, device, mix []byte) error {
+	id, err := windows.UTF16PtrFromString(deviceID)
+	if err != nil {
+		return err
+	}
+	if len(device) < waveFormatExSize || len(mix) < waveFormatExSize {
+		return errors.New("truncated format")
+	}
+	hr, _, _ := syscall.SyscallN(p.setDeviceFormat,
+		uintptr(unsafe.Pointer(p.unk)), uintptr(unsafe.Pointer(id)),
+		uintptr(unsafe.Pointer(&device[0])), uintptr(unsafe.Pointer(&mix[0])))
+	if hr != 0 {
+		return ole.NewError(hr)
+	}
+	return nil
 }
 
 func (p *policyConfig) SetDefaultEndpoint(deviceID string, role uint32) error {
@@ -88,19 +158,32 @@ type Switcher struct {
 	// off and nothing was remembered, because the headset already was the
 	// default when novamix started. Empty leaves the defaults alone then.
 	fallbackMatch string
-	enum          *wca.IMMDeviceEnumerator
-	policy        *policyConfig
-	flows         [2]*flow
+	// kick closes the streams still playing on a playback device a moment
+	// after the default moved away from it. An application that opened
+	// the device itself (most games) ignores the new default and Windows
+	// cannot move its stream, but it does reopen on the default device
+	// when its stream is closed under it.
+	kick bool
+	// stale are the playback endpoints the default last moved away from,
+	// due a kick at kickAt.
+	stale  []string
+	kickAt time.Time
+	enum   *wca.IMMDeviceEnumerator
+	policy *policyConfig
+	flows  [2]*flow
 }
 
 // New returns a switcher for the endpoints whose friendly name contains
 // deviceMatch (case-insensitive), falling back to the endpoints matching
 // fallbackMatch when the headset goes off with no previous default known.
-func New(log *slog.Logger, deviceMatch, fallbackMatch string) *Switcher {
+// With kick, applications that keep playing on the device switched away
+// from are made to reopen on the new default.
+func New(log *slog.Logger, deviceMatch, fallbackMatch string, kick bool) *Switcher {
 	return &Switcher{
 		log:           log,
 		deviceMatch:   deviceMatch,
 		fallbackMatch: fallbackMatch,
+		kick:          kick,
 		flows: [2]*flow{
 			{dataFlow: wca.ERender, name: "playback", previous: map[uint32]string{}},
 			{dataFlow: wca.ECapture, name: "recording", previous: map[uint32]string{}},
@@ -132,6 +215,7 @@ func (s *Switcher) Run(ctx context.Context, states <-chan bool) error {
 	s.policy = policy
 	defer policy.Release()
 
+	var kick <-chan time.Time
 	for {
 		select {
 		case <-ctx.Done():
@@ -143,8 +227,25 @@ func (s *Switcher) Run(ctx context.Context, states <-chan bool) error {
 			} else {
 				s.restore()
 			}
+			if len(s.stale) > 0 {
+				kick = time.After(time.Until(s.kickAt))
+			}
+		case <-kick:
+			kick = nil
+			s.kickStale()
 		}
 	}
+}
+
+// markStale schedules a kick of the playback endpoints the default just
+// moved away from.
+func (s *Switcher) markStale(f *flow, ids ...string) {
+	if !s.kick || f.dataFlow != wca.ERender || len(ids) == 0 {
+		return
+	}
+	slices.Sort(ids)
+	s.stale = slices.Compact(ids)
+	s.kickAt = time.Now().Add(kickDelay)
 }
 
 // takeOver makes the headset endpoints default, remembering what they
@@ -176,13 +277,17 @@ func (s *Switcher) takeOver() {
 			continue
 		}
 
-		for role := range previous {
+		var replaced []string
+		for role, id := range previous {
 			if err := s.policy.SetDefaultEndpoint(headset, role); err != nil {
 				s.log.Warn("setting default endpoint", "flow", f.name, "role", role, "err", err)
 				delete(previous, role)
+				continue
 			}
+			replaced = append(replaced, id)
 		}
 		f.previous = previous
+		s.markStale(f, replaced...)
 		s.log.Info("switched default device to headset", "flow", f.name, "device", name)
 	}
 }
@@ -202,6 +307,9 @@ func (s *Switcher) restore() {
 		}
 		s.log.Info("restored previous default device", "flow", f.name, "device", s.nameOf(f.previous[wca.EConsole]))
 		clear(f.previous)
+		if headset, _, err := s.findHeadset(f.dataFlow); err == nil {
+			s.markStale(f, headset)
+		}
 	}
 }
 
@@ -232,6 +340,120 @@ func (s *Switcher) fallBack(f *flow) {
 		}
 	}
 	s.log.Info("switched default device to fallback", "flow", f.name, "device", name)
+	s.markStale(f, headset)
+}
+
+// kickStale closes the streams still playing on the endpoints the default
+// moved away from, so their applications reopen on the default device.
+// An endpoint nothing plays on, or that is the default again, is left
+// alone.
+func (s *Switcher) kickStale() {
+	stale := s.stale
+	s.stale = nil
+
+	current, err := s.defaultID(wca.ERender, wca.EConsole)
+	if err != nil {
+		s.log.Debug("no default endpoint to move streams to", "err", err)
+		return
+	}
+	for _, id := range stale {
+		if id == current {
+			continue
+		}
+		name := s.nameOf(id)
+		pids, err := s.playing(id)
+		if err != nil {
+			s.log.Debug("listing streams on old device", "device", name, "err", err)
+			continue
+		}
+		if len(pids) == 0 {
+			s.log.Debug("nothing left playing on old device", "device", name)
+			continue
+		}
+		if err := s.closeStreams(id); err != nil {
+			s.log.Warn("could not move the applications still playing on the old device",
+				"device", name, "pids", pids, "err", err)
+			continue
+		}
+		s.log.Info("closed streams left on old device so they reopen on the default one",
+			"device", name, "pids", pids)
+	}
+}
+
+// playing returns the processes with a stream running on the endpoint,
+// leaving out the system sounds session.
+func (s *Switcher) playing(id string) ([]uint32, error) {
+	dev, err := getDevice(s.enum, id)
+	if err != nil {
+		return nil, err
+	}
+	defer dev.Release()
+
+	var manager *wca.IAudioSessionManager2
+	if err := dev.Activate(wca.IID_IAudioSessionManager2, wca.CLSCTX_ALL, nil, &manager); err != nil {
+		return nil, err
+	}
+	defer manager.Release()
+
+	var sessions *wca.IAudioSessionEnumerator
+	if err := manager.GetSessionEnumerator(&sessions); err != nil {
+		return nil, err
+	}
+	defer sessions.Release()
+
+	var count int
+	if err := sessions.GetCount(&count); err != nil {
+		return nil, err
+	}
+	var pids []uint32
+	for i := range count {
+		var control *wca.IAudioSessionControl
+		if err := sessions.GetSession(i, &control); err != nil {
+			continue
+		}
+		if pid, ok := playingProcess(control); ok && !slices.Contains(pids, pid) {
+			pids = append(pids, pid)
+		}
+		control.Release()
+	}
+	return pids, nil
+}
+
+// playingProcess returns the process of a session that is rendering
+// right now and is not the system sounds.
+func playingProcess(control *wca.IAudioSessionControl) (uint32, bool) {
+	var state uint32
+	if err := control.GetState(&state); err != nil || state != wca.AudioSessionStateActive {
+		return 0, false
+	}
+	disp, err := control.QueryInterface(wca.IID_IAudioSessionControl2)
+	if err != nil {
+		return 0, false
+	}
+	c2 := (*wca.IAudioSessionControl2)(unsafe.Pointer(disp))
+	defer c2.Release()
+
+	// S_OK means "is the system sounds session"; S_FALSE comes back as an error.
+	if c2.IsSystemSoundsSession() == nil {
+		return 0, false
+	}
+	var pid uint32
+	if err := c2.GetProcessId(&pid); err != nil {
+		return 0, false
+	}
+	return pid, true
+}
+
+// closeStreams makes Windows close every stream on the endpoint by
+// setting the format it already has: there is no call that only closes
+// streams, but setting a format does, and the same one leaves the device
+// as it was.
+func (s *Switcher) closeStreams(id string) error {
+	device, mix, err := s.policy.Formats(id)
+	if err != nil {
+		return err
+	}
+	return s.policy.SetDeviceFormat(id, device, mix)
 }
 
 func (s *Switcher) defaultID(dataFlow, role uint32) (string, error) {

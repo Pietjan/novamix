@@ -25,6 +25,7 @@ novamix [flags]
 | `-refresh` | `2s` | How often the dial is re-applied, so an app started afterwards gets the right volume. |
 | `-switch` | `true` | Make the headset the default playback and recording device while it is on, and put the previous defaults back when it goes off or the dongle is unplugged. `-switch=false` leaves the defaults alone. |
 | `-fallback` | | Substring of the device to switch to when the headset goes off while it already was the default when novamix started, so there is no previous device to go back to. Without it novamix logs the available devices and leaves the default alone. |
+| `-kick` | `true` | After a switch, close the streams of applications still playing on the old device a second later, so they reopen on the new default. Needed for applications that pick their device once and ignore a change of default, as many games do. `-kick=false` leaves them where they are. |
 | `-log` | | Append logs to a file instead of stderr. Use this with the console-less build. |
 | `-v` | | Debug logging: every volume change and the collections opened on the dongle. |
 | `-dump` | | Log every raw HID report. Use it when the dial does nothing, to see what the dongle sends. |
@@ -71,6 +72,18 @@ interop.
   remembers what each role (default, multimedia, communications) pointed at
   before and restores exactly that.
 
+  Changing the default only moves applications that follow it. Many games
+  open the device that is default when their sound starts and stay on it,
+  and Windows has no call to move a stream another process opened (the
+  per-app output setting of the volume mixer does not move one either).
+  Such an application does reopen on the default device when its stream is
+  closed under it, so a second after a switch, if something is still
+  playing on the device switched away from, novamix sets that device's
+  format to the format it already has, through the same `IPolicyConfig`.
+  Windows closes every stream on a device whose format is set, even to the
+  same one, so the device itself is left exactly as it was. Nothing is
+  done when nothing is left playing there.
+
 Known limits:
 
 - Per-app volume is the mechanism, so novamix overwrites what you set in the
@@ -78,6 +91,13 @@ Known limits:
   a clean exit.
 - An app that plays through a different device than the one matched by
   `-device` is not touched.
+- The kick closes every stream on the old device, so an application that
+  stayed there on purpose and is playing at that moment (one set to that
+  device in its own settings) has its sound interrupted for an instant and
+  reopens where it was. An application that does not recover from a closed
+  stream stays silent until its sound is restarted; `-kick=false` avoids
+  both. An application that is not playing at the moment of the switch is
+  not moved.
 - Device switching relies on an undocumented interface. It has been stable
   since Windows 7, but a Windows update could in principle break it; the rest
   of novamix keeps working if it does.
@@ -85,4 +105,6 @@ Known limits:
 Verified on an Arctis Nova 7 (PID 0x2202): the dongle pushes a `0x45` dial
 report on interface 5 as the dial moves and answers the `0xb0` status request
 on interface 3; with the headset off it reports no headset and `0xff` for the
-dial, which is ignored.
+dial, which is ignored. World of Warcraft is the game the kick was made for:
+it stays on the old device through a change of default and reopens on the new
+one when kicked.
