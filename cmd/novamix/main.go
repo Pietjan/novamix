@@ -1,7 +1,8 @@
 //go:build windows
 
-// Command novamix turns the ChatMix dial of a SteelSeries Arctis Nova 7
-// into per-application volume on Windows, without SteelSeries GG.
+// Command novamix turns the ChatMix dial of a SteelSeries Arctis Nova 7,
+// Nova 5 or Arctis 7+ into per-application volume on Windows, without
+// SteelSeries GG.
 //
 // It reads the dial over HID from the wireless dongle and sets the volume
 // of every audio session on the headset's playback device: sessions of
@@ -31,7 +32,7 @@ var version = "dev"
 func main() {
 	var (
 		chatApps    = flag.String("chat", strings.Join(mixer.DefaultChatApps, ","), "comma-separated executables mixed on the chat side")
-		device      = flag.String("device", "Arctis Nova", "substring of the playback device name to mix on; empty for the default device")
+		device      = flag.String("device", "Arctis", "substring of the playback device name to mix on; empty for the default device")
 		poll        = flag.Duration("poll", time.Second, "how often to ask the dongle for its status (initial dial position, headset on/off); dial moves are pushed regardless")
 		refresh     = flag.Duration("refresh", 2*time.Second, "how often to re-apply the dial to audio sessions that appeared since")
 		autoSwitch  = flag.Bool("switch", true, "make the headset the default playback and recording device while it is on, and restore the previous ones when it goes off")

@@ -35,7 +35,7 @@ func setup() {
 	}
 
 	if !ask("Install novamix "+version+"?\n\n"+
-		"It makes the ChatMix dial of an Arctis Nova 7 work without SteelSeries GG. "+
+		"It makes the ChatMix dial of a SteelSeries Arctis Nova 7, Nova 5 or Arctis 7+ work without SteelSeries GG. "+
 		"It runs in the background, without a window, and starts by itself when you sign in to Windows.", 0) {
 		return
 	}

@@ -90,7 +90,7 @@ func taskXML(username, exe string, args []string) ([]byte, error) {
 	t := task{
 		Version:     "1.2",
 		XMLNS:       "http://schemas.microsoft.com/windows/2004/02/mit/task",
-		Description: "ChatMix for the Arctis Nova 7 without SteelSeries GG",
+		Description: "ChatMix for SteelSeries Arctis headsets without SteelSeries GG",
 		LogonUser:   username,
 		Principal:   principal{ID: "Author", UserID: username, LogonType: "InteractiveToken", RunLevel: "LeastPrivilege"},
 		Settings: settings{

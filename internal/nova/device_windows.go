@@ -14,19 +14,20 @@ import (
 	"github.com/pietjan/novamix/internal/hid"
 )
 
-// Device is an attached Nova 7 dongle: every readable HID collection it
-// exposes, plus the vendor collection used for status requests.
+// Device is an attached dongle: every readable HID collection it exposes,
+// plus the vendor collection used for status requests.
 type Device struct {
 	Name   string
+	family *Family
 	vendor *hid.Device   // command/status collection
 	all    []*hid.Device // every collection we listen on, vendor included
 }
 
-// Find enumerates HID collections and opens the first Nova 7 dongle. It
-// returns ErrNotFound when none is attached.
+// Find enumerates HID collections and opens the first supported dongle.
+// It returns ErrNotFound when none is attached.
 func Find(log *slog.Logger) (*Device, error) {
 	infos, err := hid.Enumerate(func(vendor, product uint16) bool {
-		_, ok := ProductIDs[product]
+		_, ok := Products[product]
 		return vendor == VendorID && ok
 	})
 	if err != nil {
@@ -39,7 +40,7 @@ func Find(log *slog.Logger) (*Device, error) {
 	// All collections of one dongle share a product ID; stick to the first
 	// product seen in case two dongles are plugged in.
 	pid := infos[0].ProductID
-	d := &Device{Name: ProductIDs[pid]}
+	d := &Device{Name: Products[pid].Name, family: Products[pid].Family}
 
 	for _, info := range infos {
 		if info.ProductID != pid || info.InputReportLen == 0 {
@@ -75,7 +76,7 @@ func Find(log *slog.Logger) (*Device, error) {
 }
 
 // ErrNotFound reports that no supported dongle is attached.
-var ErrNotFound = errors.New("no Arctis Nova 7 dongle found")
+var ErrNotFound = errors.New("no supported SteelSeries dongle found")
 
 // Close releases every collection, unblocking any reader.
 func (d *Device) Close() {
@@ -158,7 +159,7 @@ func (d *Device) Run(ctx context.Context, poll time.Duration, dump bool, log *sl
 			if dump {
 				log.Debug("report", "interface", r.dev.Interface, "collection", r.dev.Collection, "data", fmt.Sprintf("% x", r.data))
 			}
-			if st, ok := ParseStatus(r.data); ok && (headset == nil || *headset != st.Headset) {
+			if st, ok := d.family.ParseStatus(r.data); ok && (headset == nil || *headset != st.Headset) {
 				headset = &st.Headset
 				if st.Headset {
 					log.Info("headset on", "battery", st.Battery, "charging", st.Charging)
@@ -167,7 +168,7 @@ func (d *Device) Run(ctx context.Context, poll time.Duration, dump bool, log *sl
 				}
 				onHeadset(st.Headset)
 			}
-			levels, ok := Parse(r.data)
+			levels, ok := d.family.Parse(r.data)
 			if !ok || (last != nil && *last == levels) {
 				continue
 			}
@@ -177,8 +178,8 @@ func (d *Device) Run(ctx context.Context, poll time.Duration, dump bool, log *sl
 	}
 }
 
-// List prints every HID collection of attached SteelSeries devices, known
-// Nova 7 dongle or not, for diagnosing an unrecognised product ID.
+// List prints every HID collection of attached SteelSeries devices,
+// supported dongle or not, for diagnosing an unrecognised product ID.
 func List(w io.Writer) error {
 	infos, err := hid.Enumerate(func(vendor, _ uint16) bool { return vendor == VendorID })
 	if err != nil {
@@ -191,7 +192,7 @@ func List(w io.Writer) error {
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(tw, "PID\tNAME\tIFACE\tCOL\tUSAGE PAGE\tUSAGE\tIN\tOUT\tKNOWN")
 	for _, i := range infos {
-		_, known := ProductIDs[i.ProductID]
+		_, known := Products[i.ProductID]
 		fmt.Fprintf(tw, "0x%04x\t%s\t%d\t%d\t0x%04x\t0x%02x\t%d\t%d\t%v\n",
 			i.ProductID, i.Product, i.Interface, i.Collection, i.UsagePage, i.Usage, i.InputReportLen, i.OutputReportLen, known)
 	}

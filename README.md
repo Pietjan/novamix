@@ -1,15 +1,34 @@
 # novamix
 
-ChatMix for the SteelSeries Arctis Nova 7 on Windows, without SteelSeries GG
-or Sonar.
+ChatMix for the SteelSeries Arctis Nova 7, Nova 5 and Arctis 7+ on Windows,
+without SteelSeries GG or Sonar.
 
-The Nova 7 dial is not mixed in the headset: the dongle only reports the dial
-position and SteelSeries' software does the mixing. novamix reads that
+On these headsets the dial is not mixed in the headset: the dongle only
+reports the dial position and SteelSeries' software does the mixing. novamix reads that
 position straight from the dongle over HID and applies it to the per-app
 volumes of the headset's playback device (the same ones in the Windows volume
 mixer). Applications on the chat list follow the chat side of the dial, every
 other application follows the game side. No driver, no virtual audio devices,
 a single exe.
+
+## Supported headsets
+
+| Headset | Status |
+| --- | --- |
+| Arctis Nova 7, Nova 7 Wireless Gen 2, Nova 7X, Nova 7 Diablo IV and WoW Edition | The Nova 7 (PID 0x2202) is verified on a real headset; the others share its protocol |
+| Arctis Nova 5, Nova 5X | Untested: report layout taken from HeadsetControl |
+| Arctis 7+, 7+ PS5, 7+ Xbox, 7+ Destiny | Untested: report layout taken from HeadsetControl |
+
+For an untested one, run the console build with `-dry-run -v` first: it logs
+the headset going on and off and the dial position without changing any
+volume, which shows whether the layout is right. `novamix -list` prints the
+product ID of any attached SteelSeries device, supported or not.
+
+Not supported, on purpose: the Nova 7P (its dial sets sidetone), the older
+Arctis 7, 9 and Pro (they present a game and a chat playback device and mix
+in hardware, so there is nothing to do), and the Nova Pro Wireless (its base
+station has to be switched into ChatMix mode first, which is not
+implemented).
 
 ## Usage
 
@@ -20,7 +39,7 @@ novamix [flags]
 | Flag | Default | Meaning |
 | --- | --- | --- |
 | `-chat` | Discord, Teams, Slack, Zoom, Telegram, WhatsApp, Signal, Webex, TeamSpeak, Mumble, Element, Skype, Guilded | Comma-separated executables mixed on the chat side. A name without extension means `.exe`. |
-| `-device` | `Arctis Nova` | Substring of the playback device's name to mix on. Empty uses the default playback device. |
+| `-device` | `Arctis` | Substring of the playback device's name to mix on. Empty uses the default playback device. |
 | `-poll` | `1s` | How often the dongle is asked for its status, which gives the initial dial position and headset on/off. Dial moves are pushed by the dongle instantly regardless. |
 | `-refresh` | `2s` | How often the dial is re-applied, so an app started afterwards gets the right volume. |
 | `-switch` | `true` | Make the headset the default playback and recording device while it is on, and put the previous defaults back when it goes off or the dongle is unplugged. `-switch=false` leaves the defaults alone. |
@@ -83,9 +102,11 @@ one. The tag is also the version the exe reports.
 
 - `internal/hid` enumerates HID collections with cfgmgr32 and hid.dll and
   reads/writes raw reports. Pure Go, no cgo.
-- `internal/nova` knows the dongle: vendor and product IDs, the `0xb0` status
-  request and report (game at byte 4, chat at byte 5, 0-100) and the pushed
-  `0x45` dial report. Protocol taken from
+- `internal/nova` knows the dongles: vendor and product IDs, the `0xb0` status
+  request and report, and the pushed `0x45` dial report. The report holds the
+  game and chat levels (0-100), the battery and whether the headset is on, at
+  offsets that differ per family (game and chat at bytes 4 and 5 on the Nova 7
+  and Arctis 7+, at 5 and 6 on the Nova 5). Protocol taken from
   [HeadsetControl](https://github.com/Sapd/HeadsetControl) and the Linux
   `hid-steelseries` ChatMix patches.
 - `internal/mixer` drives Core Audio through COM (`IAudioSessionManager2`,

@@ -6,7 +6,7 @@
           "name": "Pietjan.novamix",
           "version": "0.0.0.0"
         },
-        "description": "ChatMix for the Arctis Nova 7 without SteelSeries GG",
+        "description": "ChatMix for SteelSeries Arctis headsets without SteelSeries GG",
         "minimum-os": "win10",
         "execution-level": "as invoker",
         "ui-access": false,
@@ -26,7 +26,7 @@
         "info": {
           "0409": {
             "CompanyName": "Pietjan Oostra",
-            "FileDescription": "novamix - ChatMix for the Arctis Nova 7",
+            "FileDescription": "novamix - ChatMix for SteelSeries Arctis headsets",
             "FileVersion": "0.0.0.0",
             "InternalName": "novamix",
             "LegalCopyright": "Copyright (c) 2026 Pietjan Oostra",
