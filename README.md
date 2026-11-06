@@ -62,6 +62,16 @@ that starts itself at logon is what antivirus heuristics distrust most; the
 properties make it look like the ordinary program it is, without any
 guarantee. A plain `go build` on a fresh checkout leaves them out.
 
+GitHub Actions builds every push to `main` and every pull request
+(`.github/workflows/build.yml`): it runs `make audit`, then `make build
+build/debug`, and uploads both exes as the `novamix` artifact of the run.
+
+Pushing a version tag publishes a release: `make release version=v0.1.0`
+tags the commit and pushes the tag, and the same workflow then attaches the
+two exes it built and their SHA-256 checksums to a GitHub release named
+after the tag, with notes generated from the commits since the previous
+one. The tag is also the version the exe reports.
+
 ## How it works
 
 - `internal/hid` enumerates HID collections with cfgmgr32 and hid.dll and

@@ -1,0 +1,78 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+    # A version tag (what "make release" pushes) also publishes a release.
+    tags: ['v[0-9]+.[0-9]+.[0-9]+']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  # A newer push replaces a running build, but a release is never cut short.
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+jobs:
+  build:
+    # The code is Windows-only but pure Go, so it cross-compiles from Linux
+    # exactly like the local WSL2 build does.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The version in the exe comes from git describe, which needs the
+          # history and the tags.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: |
+            go.sum
+            tools/go.sum
+
+      - name: Audit
+        run: make audit
+
+      - name: Build
+        run: make build build/debug
+
+      - name: Upload the executables
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: novamix
+          path: |
+            bin/novamix.exe
+            bin/novamix-debug.exe
+          if-no-files-found: error
+
+  release:
+    # Only for a version tag, and only with the exes the build job made
+    # after its checks passed.
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write # to create the release
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: novamix
+          path: dist
+
+      - name: Publish the release
+        working-directory: dist
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          sha256sum novamix.exe novamix-debug.exe > SHA256SUMS
+          gh release create "$TAG" novamix.exe novamix-debug.exe SHA256SUMS \
+            --repo "$GITHUB_REPOSITORY" --title "$TAG" --generate-notes --verify-tag
