@@ -54,6 +54,14 @@ Re-run `-install` to update the exe or change flags; `-uninstall` removes it.
 `make install` and `make uninstall` drive those from WSL2 through Windows
 interop.
 
+Both builds carry Windows file properties (description, product, company,
+version) and an application manifest, generated from
+`cmd/novamix/winres/winres.json` by `make resource`, which the build targets
+run first. The exe is unsigned, and an unsigned exe with no properties at all
+that starts itself at logon is what antivirus heuristics distrust most; the
+properties make it look like the ordinary program it is, without any
+guarantee. A plain `go build` on a fresh checkout leaves them out.
+
 ## How it works
 
 - `internal/hid` enumerates HID collections with cfgmgr32 and hid.dll and

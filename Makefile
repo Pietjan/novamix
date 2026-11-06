@@ -12,6 +12,13 @@ tools_bin = bin/tools
 app_version = $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 version_flags = -X main.version=$(app_version)
 
+# The exe's Windows properties (description, product, version, manifest)
+# come from a resource object that go build links in when it sits next to
+# main. Its numeric version is the latest tag, 0.0.0 before the first one.
+resource_json = $(main_package_path)/winres/winres.json
+resource_out = $(main_package_path)/rsrc
+file_version = $(shell git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$$' || echo 0.0.0).0
+
 # ==================================================================================== #
 # HELPERS
 # ==================================================================================== #
@@ -36,9 +43,12 @@ $(tools_bin)/modernize: tools/go.mod tools/go.sum
 $(tools_bin)/govulncheck: tools/go.mod tools/go.sum
 	go build $(tools) -o $@ golang.org/x/vuln/cmd/govulncheck
 
-## tools: build the pinned analysis tools into bin/tools/
+$(tools_bin)/go-winres: tools/go.mod tools/go.sum
+	go build $(tools) -o $@ github.com/tc-hib/go-winres
+
+## tools: build the pinned analysis and resource tools into bin/tools/
 .PHONY: tools
-tools: $(tools_bin)/modernize $(tools_bin)/govulncheck
+tools: $(tools_bin)/modernize $(tools_bin)/govulncheck $(tools_bin)/go-winres
 
 # ==================================================================================== #
 # QUALITY CONTROL
@@ -80,14 +90,20 @@ tidy: tools
 	GOOS=windows $(tools_bin)/modernize -test -fix ./...
 	go fmt ./...
 
+## resource: generate the exe's version info and manifest for go build to link in
+.PHONY: resource
+resource: $(tools_bin)/go-winres
+	$(tools_bin)/go-winres make --in $(resource_json) --arch amd64 --out $(resource_out) \
+		--file-version '$(file_version)' --product-version '$(file_version) ($(app_version))'
+
 ## build: build the Windows binary into bin/ (no console window)
 .PHONY: build
-build:
+build: resource
 	GOOS=windows GOARCH=amd64 go build -ldflags="-s -w -H=windowsgui $(version_flags)" -o bin/$(binary_name).exe $(main_package_path)
 
 ## build/debug: build with a console window attached (log output visible)
 .PHONY: build/debug
-build/debug:
+build/debug: resource
 	GOOS=windows GOARCH=amd64 go build -ldflags="$(version_flags)" -o bin/$(binary_name)-debug.exe $(main_package_path)
 
 # Launching a fresh exe straight off \\wsl$ hangs before main() (Defender
